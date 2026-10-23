@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from esmvalcore.preprocessor._regrid_iris_esmf_regrid import IrisESMFRegrid
 from esmvalcore.preprocessor._regrid_unstructured import (
+    UnstructuredAreaWeighted,
     UnstructuredLinear,
     UnstructuredLinearRegridder,
     UnstructuredNearest,
@@ -26,6 +27,7 @@ __all__ = [
     "UnstructuredLinear",
     "UnstructuredLinearRegridder",
     "UnstructuredNearest",
+    "UnstructuredAreaWeighted",
 ]
 
 

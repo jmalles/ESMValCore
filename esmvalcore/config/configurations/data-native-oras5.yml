@@ -1,0 +1,15 @@
+# Read data from the ICON model in its native format.
+projects:
+  ORAS5:
+    data:
+      oras5:
+        type: "esmvalcore.local.LocalDataSource"
+        rootpath: /work/bd1083/b382555/EERIE/ #[/work/bd1083/b380216/data_transfer_SK_to_KW/eerie/,
+                   #/work/bd1083/b382555/EERIE/,] # ~/climate_data
+        dirname_template: '/'
+        filename_template: '*{raw_name}*{version}*.nc'
+  # input_dir:
+  #   default: '/'
+  # input_file:
+  #   default: '*{raw_name}*{version}*.nc'
+  # output_file: '{project}_{dataset}_{version}_{mip}_{short_name}'

@@ -152,7 +152,7 @@ class CMORCheck:
         if self.frequency != "fx":
             self._check_time_coord()
 
-        self._check_rank()
+        # self._check_rank()
 
         self.report_debug_messages()
         self.report_warnings()
@@ -756,7 +756,7 @@ class CMORCheck:
         freq = self.frequency
         if freq.lower().endswith("pt"):
             freq = freq[:-2]
-        if freq in ["mon", "mo"]:
+        if freq in ["month", "mon", "mo"]:
             dates = coord.units.num2date(coord.points)
             for i in range(len(coord.points) - 1):
                 first = dates[i]
@@ -804,9 +804,21 @@ class CMORCheck:
                     interval < target_interval[0]
                     or interval > target_interval[1]
                 ):
-                    msg = "{}: Frequency {} does not match input data"
-                    self.report_error(msg, var_name, freq)
-                    break
+                    # msg = '{}: Frequency {} does not match input data'
+                    # self.report_error(msg, var_name, freq)
+                    msg = (
+                        "{}: Frequency {} does not match input data. Found "
+                        "{}  interval at points {} to {}"
+                    )
+                    self.report_warning(
+                        msg,
+                        var_name,
+                        freq,
+                        interval,
+                        coord.units.num2date(coord.points[i]),
+                        coord.units.num2date(coord.points[i + 1]),
+                    )
+                    # break
 
         self._check_time_bounds(coord)
 

@@ -20,7 +20,10 @@ from iris.coords import AuxCoord
 from iris.cube import Cube, CubeList
 from iris.exceptions import CoordinateNotFoundError
 
-from esmvalcore.iris_helpers import ignore_iris_vague_metadata_warnings
+from esmvalcore.iris_helpers import (
+    has_unstructured_grid,
+    ignore_iris_vague_metadata_warnings,
+)
 from esmvalcore.preprocessor._shared import (
     apply_mask,
     get_dims_along_axes,
@@ -88,16 +91,18 @@ def extract_region(  # noqa: C901
     if abs(end_latitude) > 90.0:
         msg = f"Invalid end_latitude: {end_latitude}"
         raise ValueError(msg)
-    if cube.coord("latitude").ndim == 1:
-        # Iris checks if any point of the cell is inside the region.
-        # To check only the center, ignore_bounds must be set to True.
+    if cube.coord("latitude").ndim == 1 and not has_unstructured_grid(cube):
+        # TODO: Include bounds for unstructured/irregular grids.
+        # Iris check if any point of the cell is inside the region
+        # To check only the center, ignore_bounds must be set to
+        # True (default) is False
         region_subset = cube.intersection(
             longitude=(start_longitude, end_longitude),
             latitude=(start_latitude, end_latitude),
             ignore_bounds=True,
         )
     else:
-        region_subset = _extract_irregular_region(
+        region_subset = _extract_nonregular_region(
             cube,
             start_longitude,
             end_longitude,
@@ -161,14 +166,29 @@ def extract_region(  # noqa: C901
     return region_subset
 
 
-def _extract_irregular_region(
+def _extract_nonregular_region(
     cube,
     start_longitude,
     end_longitude,
     start_latitude,
     end_latitude,
 ):
-    """Extract a region from a cube on an irregular grid."""
+    """Extract a region from a cube on a non-regular grid."""
+    # Convert longitudes to valid range
+    # if (start_longitude < 0) or (end_longitude < 0):
+    #     if not ((-180 <= start_longitude <= 180) & (-180 <= end_longitude <= 180)):
+    #         raise ValueError("Invalid longitude range, please keep within "
+    #                          "-180 to 180 or 0 to 360.")
+    #     lons = (cube.coord('longitude').points + 180.) % 360. - 180.
+
+    # else:
+    #     if not ((0 <= start_longitude <= 360) & (0 <= end_longitude <= 360)):
+    #         raise ValueError("Invalid longitude range, please keep within "
+    #                          "-180 to 180 or 0 to 360.")
+    #     lons = (cube.coord('longitude').points + 360.) % 360.
+
+    # lats = cube.coord('latitude').points
+
     # Convert longitudes to valid range
     if start_longitude != 360.0:
         start_longitude %= 360.0
@@ -178,6 +198,9 @@ def _extract_irregular_region(
     # Select coordinates inside the region
     lats = cube.coord("latitude").points
     lons = (cube.coord("longitude").points + 360.0) % 360.0
+
+    # Select coordinates inside the region
+    # TODO: get the selection right for irregular grids (haversine distance?)
     if start_longitude <= end_longitude:
         select_lons = (lons >= start_longitude) & (lons <= end_longitude)
     else:
@@ -191,6 +214,32 @@ def _extract_irregular_region(
     selection = select_lats & select_lons
 
     # Crop the selection, but keep rectangular shape
+    if has_unstructured_grid(cube):
+        recreate_mesh = False
+        if cube.mesh:
+            from iris.mesh import MeshXY
+
+            mesh_dim = cube.mesh_dim()
+            mesh_location = cube.location
+            recreate_mesh = True
+        i_range = selection.nonzero()[0]
+        if i_range.size == 0:
+            raise ValueError("No data points available in selected region")
+        # i_min, i_max = i_range.min(), i_range.max()
+        # i_slice = slice(i_min, i_max + 1)
+        # cube = cube[..., i_slice]
+        cube = cube[..., selection]
+        if recreate_mesh:
+            coords_on_mesh_dim = cube.coords(dimensions=mesh_dim)
+            new_mesh = MeshXY.from_coords(
+                *[c for c in coords_on_mesh_dim if c.has_bounds()],
+            )
+            new_mesh_coords = new_mesh.to_MeshCoords(mesh_location)
+            for coord in new_mesh_coords:
+                cube.remove_coord(coord.name())
+                cube.add_aux_coord(coord, mesh_dim)
+        return cube
+        # selection = selection[i_slice]
     i_range, j_range = selection.nonzero()
     if i_range.size == 0:
         msg = "No data points available in selected region"

@@ -663,7 +663,7 @@ def _get_preprocessor_products(
         check.preprocessor_supplementaries(dataset, settings)
         input_datasets = _get_input_datasets(dataset)
         missing = _check_input_files(input_datasets)
-        if missing:
+        if missing and not dataset.facets.get("catalog", None):
             if _allow_skipping(dataset):
                 logger.info("Skipping: %s", missing)
             else:

@@ -157,6 +157,7 @@ def cumulative_sum(
     cube: Cube,
     coord: Coord | str,
     weights: np.ndarray | da.Array | bool | None = None,
+    reverse: bool = False,
     method: Literal["sequential", "blelloch"] = "sequential",
 ) -> Cube:
     """Calculate cumulative sum of the elements along a given coordinate.
@@ -215,13 +216,21 @@ def cumulative_sum(
     # numpy's/dask's behavior)
     if axes:
         if cube.has_lazy_data():
+            if reverse:
+                cube.data = da.flip(cube.core_data(), axis=axes[0])
             cube.data = da.cumsum(
                 cube.core_data(),
                 axis=axes[0],
                 method=method,
             )
+            if reverse:
+                cube.data = da.flip(cube.core_data(), axis=axes[0])
         else:
+            if reverse:
+                cube.data = np.flip(cube.core_data(), axis=axes[0])
             cube.data = np.cumsum(cube.core_data(), axis=axes[0])
+            if reverse:
+                cube.data = np.flip(cube.core_data(), axis=axes[0])
 
     # Adapt cube metadata
     if cube.var_name is not None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import inspect
 import logging
 from pprint import pformat
@@ -455,23 +456,27 @@ def preprocess(
 
     result = []
     if itype.endswith("s"):
+        timestamp1 = datetime.datetime.now(datetime.UTC)
         result.append(
             _run_preproc_function(
-                function,
-                items,
-                settings,
-                input_files=input_files,
-            ),
+                function, items, settings, input_files=input_files
+            )
+        )
+        timestamp2 = datetime.datetime.now(datetime.UTC)
+        logger.info(
+            "Time for running %s was: %s", step, timestamp2 - timestamp1
         )
     else:
         for item in items:
+            timestamp1 = datetime.datetime.now(datetime.UTC)
             result.append(
                 _run_preproc_function(
-                    function,
-                    item,
-                    settings,
-                    input_files=input_files,
-                ),
+                    function, item, settings, input_files=input_files
+                )
+            )
+            timestamp2 = datetime.datetime.now(datetime.UTC)
+            logger.info(
+                "Time for running %s was: %s", step, timestamp2 - timestamp1
             )
 
     if step == "save":

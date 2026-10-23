@@ -1,0 +1,14 @@
+# Read data from the ICON model in its native format.
+projects:
+  FESOM:
+    data:
+      fesom: &fesom
+        type: "esmvalcore.local.LocalDataSource"
+        rootpath: ~/climate_data
+        dirname_template: "{exp}"
+        filename_template: "{exp}_{var_type}*.nc"
+      giulia:
+        type: "esmvalcore.local.LocalDataSource"
+        rootpath: /scratch/b/b383308/fesom_output
+        dirname_template: '{exp}/'
+        filename_template: '*{raw_name}*{fesom}*.nc'

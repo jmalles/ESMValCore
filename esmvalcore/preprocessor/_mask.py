@@ -20,7 +20,10 @@ import shapely.vectorized as shp_vect
 from iris.analysis import Aggregator
 from iris.util import rolling_window
 
-from esmvalcore.iris_helpers import ignore_iris_vague_metadata_warnings
+from esmvalcore.iris_helpers import (
+    has_unstructured_grid,
+    ignore_iris_vague_metadata_warnings,
+)
 from esmvalcore.preprocessor._shared import (
     apply_mask,
 )
@@ -307,11 +310,15 @@ def _mask_with_shp(cube, shapefilename, region_indices=None):
 
     # Create a set of x,y points from the cube
     # 1D regular grids
-    if cube.coord("longitude").points.ndim < 2:
-        x_p, y_p = np.meshgrid(
-            cube.coord(axis="X").points,
-            cube.coord(axis="Y").points,
+    if cube.coord("longitude").points.ndim < 2 and not (
+        has_unstructured_grid(cube)
+    ):
+        x_p, y_p = da.meshgrid(
+            cube.coord(axis="X").points, cube.coord(axis="Y").points
         )
+    # 1D unstructured grids
+    elif has_unstructured_grid(cube):
+        x_p, y_p = cube.coord(axis="X").points, cube.coord(axis="Y").points
     # 2D irregular grids; spit an error for now
     else:
         msg = (

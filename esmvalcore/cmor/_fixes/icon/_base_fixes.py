@@ -13,6 +13,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 from urllib.parse import urlparse
 
+import dask.array as da
 import iris
 import numpy as np
 import pandas as pd
@@ -92,6 +93,22 @@ class IconFix(NativeDatasetFix):
         # Extract node coordinates from horizontal grid
         (node_lat, node_lon) = self._get_node_coords(horizontal_grid)
 
+        if not self.extra_facets.get("ugrid", True):
+            lat_coord = iris.coords.AuxCoord(
+                points=face_lat.points,
+                bounds=face_lat.bounds,
+                standard_name="latitude",
+                var_name="lat",
+                units="degrees_north",
+            )
+            lon_coord = iris.coords.AuxCoord(
+                points=face_lon.points,
+                bounds=face_lat.bounds,
+                standard_name="longitude",
+                var_name="lon",
+                units="degrees_east",
+            )
+            return lon_coord, lat_coord
         # The bounds given by the face coordinates slightly differ from the
         # bounds determined by the connectivity. We arbitrarily assume here
         # that the information given by the connectivity is correct.
@@ -112,7 +129,16 @@ class IconFix(NativeDatasetFix):
                 "node coordinate ('vlat'). Using bounds defined by "
                 "connectivity.",
             )
-        face_lat.bounds = node_lat.points[conn_node_inds]
+            if not da.allclose(da.abs(face_lat.bounds[idx_notclose]), 90.0):
+                logger.warning(
+                    "Longitude bounds of the face coordinate ('clon_vertices' in "
+                    "the grid file) differ from the corresponding values "
+                    "calculated from the connectivity ('vertex_of_cell') and the "
+                    "node coordinate ('vlon'). Note that these values are allowed "
+                    "to differ by 360° or at the poles of the grid. Using bounds "
+                    "defined by connectivity.",
+                )
+            face_lon.bounds = node_lon.points[conn_node_inds]
 
         # Longitude: there might be differences at the poles, where the
         # longitude information does not matter (-> check that the only large
@@ -134,7 +160,6 @@ class IconFix(NativeDatasetFix):
                 "to differ by 360° or at the poles of the grid. Using bounds "
                 "defined by connectivity.",
             )
-        face_lon.bounds = node_lon.points[conn_node_inds]
 
         # Create mesh
         connectivity = Connectivity(
@@ -549,6 +574,8 @@ class AllVarsBase(IconFix):
         """Fix metadata."""
         cubes = self.add_additional_cubes(cubes)
         cube = self.get_cube(cubes)
+
+        cube = self.mask_zeroes(cube)
 
         # Fix time
         if self.vardef.has_coord_with_standard_name("time"):
@@ -1116,6 +1143,46 @@ class AllVarsBase(IconFix):
         # Modify time coordinate in place
         time_coord.points = new_dt_points
         time_coord.units = new_t_units
+
+    def mask_zeroes(self, cube: Cube) -> Cube:
+        """Mask spatial cells that are zero for all times (in-place)."""
+        if not cube.coords("time"):
+            cube.data = da.ma.masked_equal(cube.core_data(), 0.0)
+            return cube
+        time_dims = cube.coord_dims("time")
+        if not time_dims:
+            cube.data = da.ma.masked_equal(cube.core_data(), 0.0)
+            return cube
+        t_axis = time_dims[0]
+
+        data = cube.core_data()
+
+        def _apply_mask(arr, mask):
+            if isinstance(arr, np.ma.MaskedArray):
+                combined = np.logical_or(arr.mask, mask)
+                cube.data = np.ma.MaskedArray(arr.data, mask=combined)
+            else:
+                cube.data = np.ma.MaskedArray(arr, mask=mask)
+
+        if isinstance(data, da.Array):
+            zero_cells = da.all(data == 0, axis=t_axis)
+            zero_full = da.broadcast_to(
+                da.expand_dims(zero_cells, axis=t_axis), data.shape
+            )
+            try:
+                import dask.array.ma as dma  # type: ignore
+
+                cube.data = dma.masked_where(zero_full, data)
+            except Exception:
+                _apply_mask(data.compute(), zero_full.compute())
+        else:
+            zero_cells = np.all(data == 0, axis=t_axis)
+            mask_full = np.broadcast_to(
+                np.expand_dims(zero_cells, axis=t_axis), data.shape
+            )
+            _apply_mask(data, mask_full)
+
+        return cube
 
 
 class NegateData(IconFix):

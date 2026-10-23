@@ -179,9 +179,20 @@ ICON:
       - '{exp}'
       - '{exp}/outdata'
       - '{exp}/output'
+      # - '{exp}/outdata'
+      # - '{exp}/run_*'
+      # - '{exp}/{version}/{var_type}/'
+      # - '{exp}/{version}/{var_type}/{raw_name}'
+      # - '{exp}/{version}/{var_type}/{raw_name}/*'
+      # - '/'
+      # - '/{region}/'
   input_file:
-    default: '{exp}_{var_type}*.nc'
-  output_file: '{project}_{dataset}_{exp}_{var_type}_{mip}_{short_name}'
+    default:
+      - '{exp}_{var_type}*.nc'
+      # - '{model_type}_{exp}_{var_type}_*.nc'
+      # - '{model_type}_{exp}_{var_type}_{raw_name}_*.nc'
+      - '{dataset}_{raw_name}.nc'
+  output_file: '{project}_{dataset}_{exp}_{mip}_{short_name}'
   cmor_type: 'CMIP6'
   cmor_default_table_prefix: 'CMIP6_'
 
@@ -208,5 +219,32 @@ ACCESS:
       - '{sub_dataset}.{freq_attribute}-*.nc'
       - 'ocean_{freq_attribute}.nc-*'
   output_file: '{project}_{dataset}_{mip}_{exp}_{institute}_{sub_dataset}_{freq_attribute}_{short_name}'
+
+FESOM:
+  cmor_strict: false
+  input_dir:
+    default:
+      # - '{resolution}_{dataset.lower}/rundir/{exp}*/'
+      # - '{exp}/{version}/{var_type}/{raw_name}/'
+      - '*/{dataset}/**/**/'
+      - '*/{dataset}/**/**/**/'
+      # - '/{region}/'
+  input_file:
+    default:
+      # - '{raw_name}.{dataset.lower}*.nc'
+      # - '{model_type}_{exp}_{var_type}_{raw_name}*.nc'
+      - '{dataset.lower}_{raw_name}_*.nc'
+      - '{dataset}_{raw_name}.nc'
+  output_file: '{project}_{dataset}_{exp}_{mip}_{short_name}'
+  cmor_type: 'CMIP6'
+  cmor_default_table_prefix: 'CMIP6_'
+
+ORAS5:
+  cmor_strict: false
+  # input_dir:
+  #   default: '/'
+  # input_file:
+  #   default: '*{raw_name}*{version}*.nc'
+  output_file: '{project}_{dataset}_{version}_{mip}_{short_name}'
   cmor_type: 'CMIP6'
   cmor_default_table_prefix: 'CMIP6_'

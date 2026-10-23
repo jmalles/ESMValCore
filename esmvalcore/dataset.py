@@ -15,6 +15,8 @@ from itertools import groupby
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import intake
+
 from esmvalcore import esgf
 from esmvalcore._recipe import check
 from esmvalcore._recipe.from_datasets import datasets_to_recipe
@@ -815,7 +817,65 @@ class Dataset:
         for file in input_files:
             file.prepare()
 
-        cube = self._load()
+        if "catalog" in self.facets and "cat_entry" in self.facets:
+            # Open the catalog and load the specified entry.
+            # Some facets have to be provided in the recipe for this to work.
+            catalog = intake.open_catalog(self.facets["catalog"])
+            cube = catalog[self.facets["cat_entry"]].to_dask()
+            cube = cube[self.facets["raw_variable"]]
+
+            if self.facets.get("depth_entry", None):
+                depth = catalog[self.facets["depth_entry"]].to_dask()
+                depth = depth[self.facets["raw_variable"]].depth
+                cube["depth"] = depth
+
+            # Load the variable and do some (EERIE-specific) fixes.
+            # In the to_dask() method, some arguments might have to be added
+            # for other use cases.
+            cube.attrs["units"] = self.facets["unit"]
+            cube.attrs["standard_name"] = ""
+            cube.time.attrs = {}
+            drop_coord = [
+                c
+                for c in list(cube.coords)
+                if not any(
+                    ext in c for ext in ["lat", "lon", "depth", "lev", "time"]
+                )
+            ]
+            for c in drop_coord:
+                cube = cube.reset_coords(c, drop=True)
+            cube = cube.to_iris()
+            cube.var_name = self.facets["cmor_variable"]
+
+            try:
+                cube.coord("grid_latitude").rename("latitude")
+                cube.coord("grid_longitude").rename("longitude")
+            except:
+                pass
+            try:
+                if not cube.coord("latitude").has_bounds():
+                    cube.remove_coord("latitude")
+                if not cube.coord("longitude").has_bounds():
+                    cube.remove_coord("longitude")
+            except:
+                pass
+
+            # Save the catalog info and preprocess the cube.
+            input_files = [
+                self.facets["catalog"] + "/" + self.facets["cat_entry"]
+            ]
+            cube = self.fix_intake([cube])
+
+        else:
+            input_files = list(self.files)
+            for supplementary_dataset in self.supplementaries:
+                input_files.extend(supplementary_dataset.files)
+            esgf.download(input_files)
+            for file in input_files:
+                file.prepare()
+
+            cube = self._load()
+
         supplementary_cubes = []
         for supplementary_dataset in self.supplementaries:
             supplementary_cube = supplementary_dataset._load()  # noqa: SLF001
@@ -832,6 +892,49 @@ class Dataset:
         )
 
         return cubes[0]
+
+    def fix_intake(self, cube: Cube) -> Cube:
+        output_file = _get_output_file(self.facets, self.session.preproc_dir)
+        settings: dict[str, dict[str, Any]] = {}
+
+        settings["fix_metadata"] = {
+            "session": self.session,
+            **self.facets,
+        }
+        settings["cmor_check_metadata"] = {
+            "check_level": self.session["check_level"],
+            "cmor_table": self.facets["project"],
+            "mip": self.facets["mip"],
+            "frequency": self.facets["frequency"],
+            "short_name": self.facets["short_name"],
+        }
+        if "timerange" in self.facets:
+            settings["clip_timerange"] = {
+                "timerange": self.facets["timerange"],
+            }
+        settings["fix_data"] = {
+            "session": self.session,
+            **self.facets,
+        }
+        settings["cmor_check_data"] = {
+            "check_level": self.session["check_level"],
+            "cmor_table": self.facets["project"],
+            "mip": self.facets["mip"],
+            "frequency": self.facets["frequency"],
+            "short_name": self.facets["short_name"],
+        }
+
+        for step, kwargs in settings.items():
+            cube = preprocess(
+                cube,
+                step,
+                input_files=self.files,
+                output_file=output_file,
+                debug=self.session["save_intermediary_cubes"],
+                **kwargs,
+            )
+
+        return cube[0]
 
     def _load(self) -> Cube:
         """Load self.files into an iris cube and return it."""

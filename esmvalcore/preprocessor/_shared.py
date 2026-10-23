@@ -7,18 +7,21 @@ Utility functions that can be used for multiple preprocessor steps
 from __future__ import annotations
 
 import inspect
+import itertools
 import logging
 import warnings
 from collections import defaultdict
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Literal
 
+import dask
 import dask.array as da
 import iris.analysis
 import numpy as np
+import psutil
 from iris.coords import CellMeasure, Coord, DimCoord
 from iris.cube import Cube
-from iris.exceptions import CoordinateMultiDimError, CoordinateNotFoundError
+from iris.exceptions import CoordinateNotFoundError
 from iris.util import broadcast_to_shape
 
 from esmvalcore.iris_helpers import (
@@ -524,12 +527,53 @@ def try_adding_calculated_cell_area(cube: Cube) -> None:
 
     # For all other cases, grid cell areas cannot be calculated
     else:
-        logger.error(
-            "Supplementary variables are needed to calculate grid cell "
-            "areas for irregular or unstructured grid of cube %s",
-            cube.summary(shorten=True),
-        )
-        raise CoordinateMultiDimError(cube.coord("latitude"))
+        logger.debug("Calculating grid cell areas for unstructured grid")
+        cell_areas = _compute_area_weights_unstructured(cube)
+        # iris broadcast_to_shape
+        if cube.coord("latitude").core_points().ndim == 2:
+            cell_areas = broadcast_to_shape(
+                cell_areas,
+                cube.shape,
+                (-2, -1),
+                chunks=cube.lazy_data().chunks
+                if cube.has_lazy_data()
+                else None,
+            )
+        else:
+            cell_areas = broadcast_to_shape(
+                cell_areas,
+                cube.shape,
+                (-1,),
+                chunks=cube.lazy_data().chunks
+                if cube.has_lazy_data()
+                else None,
+            )
+
+        # if cube.coords(axis="Z"):
+        #     try:
+        #         aux_dim = cube.coord_dims(cube.coords(axis="Z")[0].name())[0]
+        #         len_dim = len(cube[0].coords(axis="X")[0].points)
+        #         cell_areas = np.repeat(
+        #             np.expand_dims(cell_areas, aux_dim), len_dim, axis=aux_dim
+        #         )
+        #     except IndexError:
+        #         pass
+        # if cube.coords("time") and cube.coord_dims("time"):
+        #     try:
+        #         aux_dim = cube.coord_dims("time")[0]
+        #         len_dim = len(cube.coords("time")[0].points)
+        #         cell_areas = np.repeat(
+        #             np.expand_dims(cell_areas, aux_dim), len_dim, axis=aux_dim
+        #         )
+        #     except IndexError:
+        #         pass
+
+        # logger.error(
+        #     "Supplementary variables are needed to calculate grid cell "
+        #     "areas for irregular or unstructured grid of cube %s",
+        #     cube.summary(shorten=True),
+        # )
+        # raise CoordinateMultiDimError(cube.coord('latitude'))
 
     # Add new cell measure
     cell_measure = CellMeasure(
@@ -562,6 +606,111 @@ def _compute_area_weights(cube):
                 cube,
             )
     return weights
+
+
+def _compute_area_weights_unstructured(cube):
+    import geopandas as gpd
+    import pandas as pd
+    import shapely
+    from distributed.client import _get_global_client
+    # from shapely.ops import split
+
+    bounds_shape = np.shape(cube.coord("latitude").bounds)
+    lat_bnds = cube.coord("latitude").bounds
+    lon_bnds = (cube.coord("longitude").bounds + 180) % 360 - 180
+    if len(bounds_shape) == 3:
+        lat_bnds = lat_bnds.flatten()
+        lon_bnds = lon_bnds.flatten()
+        lat_bnds = np.reshape(
+            lat_bnds,
+            (int(len(lat_bnds) / bounds_shape[-1]), int(bounds_shape[-1])),
+        )
+        lon_bnds = np.reshape(
+            lon_bnds,
+            (int(len(lon_bnds) / bounds_shape[-1]), int(bounds_shape[-1])),
+        )
+
+    lon_bnds = (lon_bnds + 360) % 360
+
+    test1 = np.where(
+        (np.max(lon_bnds, axis=1) - np.min(lon_bnds, axis=1)) >= 180,
+    )[0]
+    test2 = np.where(
+        (
+            np.max((lon_bnds[test1] + 180) % 360 - 180, axis=1)
+            - np.min((lon_bnds[test1] + 180) % 360 - 180, axis=1)
+        )
+        >= 180,
+    )[0]
+    test1 = np.delete(test1, test2)
+
+    def compute_geoms(lats, lons):
+        geoms = [
+            shapely.geometry.Polygon(zip(lons[i, :], lats[i, :]))
+            for i in range(lons.shape[0])
+        ]
+        return geoms
+
+    @dask.delayed
+    def worker(lats, lons, idx):
+        odf = []
+        """worker function"""
+        # odf.append(compute_geoms(lons, lats))
+        geoms = compute_geoms(lats, lons)
+        idf = gpd.GeoDataFrame(
+            {
+                "i": idx,
+            },
+            geometry=geoms,
+        )
+        odf.append(idf)
+        return odf
+
+    # n_cpus = os.cpu_count()
+    dask_client = _get_global_client()
+    if dask_client:
+        n_cpus = len(dask_client.scheduler_info(n_workers=-1)["workers"])
+        # logger.info("Using %s Dask workers to compute area weights", n_cpus)
+        # n_cpus = sum(dask_client.ncores().values())
+    else:
+        # n_cpus = os.cpu_count() # ?
+        n_cpus = len(psutil.Process().cpu_affinity())  # ?
+
+    n_max = lon_bnds.shape[0]
+    test = (~np.isin(range(n_max), test1)).nonzero()[0]
+    idxs = np.array_split(np.arange(n_max)[test], n_cpus)
+
+    results = [worker(lat_bnds[idx, :], lon_bnds[idx, :], idx) for idx in idxs]
+    results = dask.compute(*results)
+    results = list(itertools.chain.from_iterable(list(results)))
+    w_df = pd.concat(results)
+
+    if len(test1) > 0:
+        idxs = np.array_split(test1, n_cpus)
+        results = [
+            worker(
+                lat_bnds[idx, :],
+                (lon_bnds[idx, :] + 180) % 360 - 180,
+                idx,
+            )
+            for idx in idxs
+        ]
+        results = dask.compute(*results)
+        results = list(itertools.chain.from_iterable(list(results)))
+        w_df2 = pd.concat(results)
+        w_df = pd.concat([w_df, w_df2])
+
+    w_df = gpd.GeoDataFrame(w_df, geometry="geometry")
+    w_df = w_df.set_index("i")
+    w_df = w_df.sort_index()
+    w_df = w_df.set_crs("EPSG:4326")
+    weights = w_df.to_crs("+proj=sinu +R=6367470").area.values
+    if len(test2) > 0:
+        weights[test2] = 0
+
+    if len(bounds_shape) == 3:
+        weights = np.reshape(weights, (bounds_shape[0], bounds_shape[1]))
+    return dask.array.array(weights)
 
 
 def get_all_coords(

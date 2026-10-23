@@ -1,0 +1,21 @@
+SOURCE: CMIP6
+generic_levels:    olevel
+!============
+variable_entry:    rbynr
+!============
+modeling_realm:    ocean
+!----------------------------------
+! Variable attributes:
+!----------------------------------
+standard_name:
+units:             1
+cell_measures:     volume: areacello
+long_name:         Rossby number in grid cell
+comment:           Rossby number
+!----------------------------------
+! Additional variable information:
+!----------------------------------
+dimensions:        longitude latitude time olevel
+type:              real
+!----------------------------------
+!

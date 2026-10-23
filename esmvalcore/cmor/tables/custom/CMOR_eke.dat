@@ -1,0 +1,22 @@
+SOURCE: CMIP6
+generic_levels:    olevel
+!============
+variable_entry:    eke
+!============
+modeling_realm:    ocean
+!----------------------------------
+! Variable attributes:
+!----------------------------------
+standard_name:
+units:             m2 s-2
+cell_methods:      time: mean area: where sea
+cell_measures:     area: areacello
+long_name:         Eddy kinetic energy in grid cell
+comment:           EKE
+!----------------------------------
+! Additional variable information:
+!----------------------------------
+dimensions:        longitude latitude time olevel
+type:              real
+!----------------------------------
+!

@@ -139,6 +139,42 @@
             "valid_max": "", 
             "ok_min_mean_abs": "", 
             "ok_max_mean_abs": ""
+        },
+        "zos": {
+            "frequency": "day", 
+            "modeling_realm": "ocean", 
+            "standard_name": "sea_surface_height_above_geoid", 
+            "units": "m", 
+            "cell_methods": "area: mean where sea time: mean", 
+            "cell_measures": "area: areacello", 
+            "long_name": "Sea Surface Height Above Geoid", 
+            "comment": "This is the dynamic sea level, so should have zero global area mean. It should not include inverse barometer depressions from sea ice.", 
+            "dimensions": "longitude latitude time", 
+            "out_name": "zos", 
+            "type": "real", 
+            "positive": "", 
+            "valid_min": "", 
+            "valid_max": "", 
+            "ok_min_mean_abs": "", 
+            "ok_max_mean_abs": ""
+        },
+        "mlotst": {
+            "frequency": "mon", 
+            "modeling_realm": "ocean", 
+            "standard_name": "ocean_mixed_layer_thickness_defined_by_sigma_t", 
+            "units": "m", 
+            "cell_methods": "area: mean where sea time: mean", 
+            "cell_measures": "area: areacello", 
+            "long_name": "Ocean Mixed Layer Thickness Defined by Sigma T", 
+            "comment": "Sigma T is potential density referenced to ocean surface.", 
+            "dimensions": "longitude latitude time", 
+            "out_name": "mlotst", 
+            "type": "real", 
+            "positive": "", 
+            "valid_min": "", 
+            "valid_max": "", 
+            "ok_min_mean_abs": "", 
+            "ok_max_mean_abs": ""
         }
     }
 }

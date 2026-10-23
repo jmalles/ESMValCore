@@ -16,7 +16,7 @@ import yamale
 
 import esmvalcore.preprocessor
 from esmvalcore.exceptions import InputFilesNotFound, RecipeError
-from esmvalcore.local import _parse_period
+from esmvalcore.local import _get_start_end_date, _parse_period
 from esmvalcore.preprocessor import TIME_PREPROCESSORS, PreprocessingTask
 from esmvalcore.preprocessor._multimodel import _get_operator_and_kwargs
 from esmvalcore.preprocessor._other import _get_var_info
@@ -24,7 +24,6 @@ from esmvalcore.preprocessor._regrid import (
     HORIZONTAL_SCHEMES_IRREGULAR,
     HORIZONTAL_SCHEMES_REGULAR,
     HORIZONTAL_SCHEMES_UNSTRUCTURED,
-    _load_generic_scheme,
 )
 from esmvalcore.preprocessor._shared import get_iris_aggregator
 from esmvalcore.preprocessor._supplementary_vars import (
@@ -198,7 +197,6 @@ def _log_data_availability_errors(dataset: Dataset) -> None:
     if not dataset.files:
         msg = get_no_data_message(dataset)
         logger.error(msg)
-        logger.error("Set 'log_level' to 'debug' to get more information")
 
 
 def _group_years(years: Iterable[int]) -> str:
@@ -258,13 +256,24 @@ def data_availability(dataset: Dataset, log: bool = True) -> None:
 
     missing_years = required_years - available_years
     if missing_years:
-        missing_txt = _group_years(missing_years)
+        n_files = len(input_files)
+        file_counter = 0
+    while missing_years:
+        start, end = _get_start_end_date(input_files[file_counter])
+        start, end = (int(start[:4]), int(end[:4]))
+        available_years.update(range(start, end + 1))
+        missing_years = required_years - available_years
+        if not missing_years:
+            break
+        file_counter += 1
+        if file_counter == n_files:
+            missing_txt = _group_years(missing_years)
 
-        msg = "No input data available for years {} in files:\n{}".format(
-            missing_txt,
-            "\n".join(str(f) for f in input_files),
-        )
-        raise InputFilesNotFound(msg)
+            msg = "No input data available for years {} in files:\n{}".format(
+                missing_txt,
+                "\n".join(str(f) for f in input_files),
+            )
+            raise InputFilesNotFound(msg)
 
 
 def preprocessor_supplementaries(
@@ -717,14 +726,14 @@ def regridding_schemes(settings: dict[str, Any]) -> None:
             raise RecipeError(msg)
 
     # Check generic regridding schemes (given as dict)
-    if isinstance(scheme, dict):
-        try:
-            _load_generic_scheme(scheme)
-        except ValueError as exc:
-            msg = (
-                f"Failed to load generic regridding scheme: {exc!s} See "
-                f"https://docs.esmvaltool.org/projects/ESMValCore/en/latest"
-                f"/recipe/preprocessor.html#generic-regridding-schemes for "
-                f"details."
-            )
-            raise RecipeError(msg) from exc
+    # if isinstance(scheme, dict):
+    #     try:
+    #         _load_generic_scheme(scheme)
+    #     except ValueError as exc:
+    #         msg = (
+    #             f"Failed to load generic regridding scheme: {exc!s} See "
+    #             f"https://docs.esmvaltool.org/projects/ESMValCore/en/latest"
+    #             f"/recipe/preprocessor.html#generic-regridding-schemes for "
+    #             f"details."
+    #         )
+    #         raise RecipeError(msg) from exc

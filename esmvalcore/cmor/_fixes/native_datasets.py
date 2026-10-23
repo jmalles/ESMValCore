@@ -127,6 +127,16 @@ class NativeDatasetFix(Fix):
                 "raw_name",
                 self.vardef.short_name,
             )
+        if (
+            not cubes.extract(NameConstraint(var_name=var_name))
+            and var_name != self.vardef.short_name
+        ):
+            logger.info(
+                "Variable '%s' not found in input file. Trying short_name '%s'.",
+                var_name,
+                self.vardef.short_name,
+            )
+            var_name = self.vardef.short_name
         if not cubes.extract(NameConstraint(var_name=var_name)):
             msg = (
                 f"Variable '{var_name}' used to extract "

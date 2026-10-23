@@ -43,6 +43,7 @@ from esmvalcore.preprocessor._supplementary_vars import (
 from esmvalcore.preprocessor.regrid_schemes import (
     GenericFuncScheme,
     IrisESMFRegrid,
+    UnstructuredAreaWeighted,
     UnstructuredLinear,
     UnstructuredNearest,
 )
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike
 
     from esmvalcore.dataset import Dataset
+
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +129,7 @@ HORIZONTAL_SCHEMES_MESH = {
 HORIZONTAL_SCHEMES_UNSTRUCTURED = {
     "linear": UnstructuredLinear(),
     "nearest": UnstructuredNearest(),
+    "area_weighted": UnstructuredAreaWeighted,
 }
 
 NamedVerticalScheme = Literal[
@@ -635,21 +638,53 @@ def _load_scheme(
     """Return scheme that can be used in :meth:`iris.cube.Cube.regrid`."""
     loaded_scheme: Any = None
 
+    # Deprecations
+    if scheme == "unstructured_nearest":
+        msg = (
+            "The regridding scheme `unstructured_nearest` has been deprecated "
+            "in ESMValCore version 2.11.0 and is scheduled for removal in "
+            "version 2.13.0. Please use the scheme `nearest` instead. This is "
+            "an exact replacement for data on unstructured grids. Since "
+            "version 2.11.0, ESMValCore is able to determine the most "
+            "suitable regridding scheme based on the input data."
+        )
+        warnings.warn(msg, ESMValCoreDeprecationWarning, stacklevel=2)
+        scheme = "nearest"
+
+    if scheme == "linear_extrapolate":
+        msg = (
+            "The regridding scheme `linear_extrapolate` has been deprecated "
+            "in ESMValCore version 2.11.0 and is scheduled for removal in "
+            "version 2.13.0. Please use a generic scheme with `reference: "
+            "iris.analysis:Linear` and `extrapolation_mode: extrapolate` "
+            "instead (see https://docs.esmvaltool.org/projects/ESMValCore/en/"
+            "latest/recipe/preprocessor.html#generic-regridding-schemes)."
+            "This is an exact replacement."
+        )
+        warnings.warn(msg, ESMValCoreDeprecationWarning, stacklevel=2)
+        scheme = "linear"
+        loaded_scheme = Linear(extrapolation_mode="extrapolate")
+        logger.debug("Loaded regridding scheme %s", loaded_scheme)
+        return loaded_scheme
+
+    # Scheme is a str -> load appropriate regridding scheme depending on
+    # the type of input data
+    if has_irregular_grid(src_cube) or has_irregular_grid(tgt_cube):
+        grid_type = "irregular"
+    elif src_cube.mesh is not None or tgt_cube.mesh is not None:
+        grid_type = "mesh"
+    elif has_unstructured_grid(src_cube):
+        grid_type = "unstructured"
+    else:
+        grid_type = "regular"
+
     if isinstance(scheme, dict):
         # Scheme is a dict -> assume this describes a generic regridding scheme
-        loaded_scheme = _load_generic_scheme(scheme)
-    else:
-        # Scheme is a str -> load appropriate regridding scheme depending on
-        # the type of input data
-        if has_irregular_grid(src_cube) or has_irregular_grid(tgt_cube):
-            grid_type = "irregular"
-        elif src_cube.mesh is not None or tgt_cube.mesh is not None:
-            grid_type = "mesh"
-        elif has_unstructured_grid(src_cube):
-            grid_type = "unstructured"
+        if grid_type in ("irregular", "mesh"):
+            loaded_scheme = IrisESMFRegrid(**scheme)
         else:
-            grid_type = "regular"
-
+            loaded_scheme = _load_generic_scheme(scheme)
+    else:
         schemes = globals()[f"HORIZONTAL_SCHEMES_{grid_type.upper()}"]
         if scheme not in schemes:
             msg = (
@@ -706,6 +741,7 @@ def _get_regridder(
     tgt_cube: Cube,
     scheme: NamedHorizontalScheme | dict,
     cache_weights: bool,
+    file: Optional[Path | str] = None,
 ):
     """Get regridder to actually perform regridding.
 
@@ -733,12 +769,42 @@ def _get_regridder(
                     return regridder
 
         # Regridder is not in cached -> return a new one and cache it
-        loaded_scheme = _load_scheme(src_cube, tgt_cube, scheme)
-        regridder = loaded_scheme.regridder(src_cube, tgt_cube)
-        _CACHED_REGRIDDERS.setdefault(name_shape_key, {})
-        _CACHED_REGRIDDERS[name_shape_key][coord_key] = regridder
+        if file:  # and 'ESMF' in scheme.get("reference", ''):
+            import esmf_regrid.experimental.io as esmf_io
+
+            # filename = file.get("name", None)
+            filepath = Path(str(file))
+            # save = file.get("save", False)
+            if filepath.is_file():
+                regridder = esmf_io.load_regridder(filepath)
+            else:
+                loaded_scheme = _load_scheme(src_cube, tgt_cube, scheme)
+                regridder = loaded_scheme.regridder(src_cube, tgt_cube)
+                # if save:
+                esmf_io.save_regridder(regridder, filepath)
+                _CACHED_REGRIDDERS.setdefault(name_shape_key, {})
+                _CACHED_REGRIDDERS[name_shape_key][coord_key] = regridder
+
+        else:
+            loaded_scheme = _load_scheme(src_cube, tgt_cube, scheme)
+            regridder = loaded_scheme.regridder(src_cube, tgt_cube)
+            _CACHED_REGRIDDERS.setdefault(name_shape_key, {})
+            _CACHED_REGRIDDERS[name_shape_key][coord_key] = regridder
 
     # (2) Weights caching disabled
+    elif file:  # and 'ESMF' in scheme.get("reference", ''):
+        import esmf_regrid.experimental.io as esmf_io
+
+        # filename = file.get("name", None)
+        filepath = Path(str(file))
+        # save = file.get("save", False)
+        if filepath.is_file():
+            regridder = esmf_io.load_regridder(filepath)
+        else:
+            loaded_scheme = _load_scheme(src_cube, tgt_cube, scheme)
+            regridder = loaded_scheme.regridder(src_cube, tgt_cube)
+            # if save:
+            esmf_io.save_regridder(regridder, filepath)
     else:
         loaded_scheme = _load_scheme(src_cube, tgt_cube, scheme)
         regridder = loaded_scheme.regridder(src_cube, tgt_cube)
@@ -778,6 +844,8 @@ def regrid(
     lon_offset: bool = True,
     cache_weights: bool = False,
     use_src_coords: Iterable[str] = ("latitude", "longitude"),
+    file: Optional[Path | str] = None,
+    nan_to_zero: bool = False,
 ) -> Cube:
     """Perform horizontal regridding.
 
@@ -894,6 +962,28 @@ def regrid(
                 if coord.standard_name not in use_src_coords:
                     cube.remove_coord(coord)
 
+    # For conservation reasons, it might make sense to convert nans to zeroes
+    if nan_to_zero:
+        cube.data = da.ma.filled(cube.core_data(), fill_value=0.0)
+
+    if file is not None and not cube.mesh:
+        loaded_scheme = _load_scheme(cube, cube, scheme)
+        cube = loaded_scheme(cube, target_grid, file, lon_offset, lat_offset)
+        if nan_to_zero:
+            logger.info("Converting zeroes to NaNs in regridded cube")
+            cube.data = da.where(
+                cube.core_data() == 0.0, np.nan, cube.core_data()
+            )
+            cube.data = da.ma.masked_where(
+                da.isnan(cube.core_data()), cube.core_data()
+            )
+            cube.data = da.ma.masked_where(
+                cube.core_data() == 0.0, cube.core_data()
+            )
+            cube.data = da.ma.masked_invalid(cube.core_data())
+        return cube
+
+    # Load target grid and select appropriate scheme
     target_grid_cube = _get_target_grid_cube(
         cube,
         target_grid,
@@ -918,12 +1008,27 @@ def regrid(
 
     # Load scheme and reuse existing regridder if possible
     if isinstance(scheme, str):
-        scheme = scheme.lower()  # type: ignore
-    regridder = _get_regridder(cube, target_grid_cube, scheme, cache_weights)
+        scheme = scheme.lower()
+    regridder = _get_regridder(
+        cube, target_grid_cube, scheme, cache_weights, file
+    )
 
     # Rechunk and actually perform the regridding
     cube = _rechunk(cube, target_grid_cube)
-    return regridder(cube)
+    cube = regridder(cube)
+
+    if nan_to_zero:
+        logger.debug("Converting zeroes to NaNs in regridded cube")
+        cube.data = da.where(cube.core_data() == 0.0, np.nan, cube.core_data())
+        cube.data = da.ma.masked_where(
+            da.isnan(cube.core_data()), cube.core_data()
+        )
+        cube.data = da.ma.masked_where(
+            cube.core_data() == 0.0, cube.core_data()
+        )
+        cube.data = da.ma.masked_invalid(cube.core_data())
+
+    return cube
 
 
 def _cache_clear():

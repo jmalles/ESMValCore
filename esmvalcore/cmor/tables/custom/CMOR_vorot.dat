@@ -1,0 +1,22 @@
+SOURCE: CMIP6
+generic_levels:    olevel
+!============
+variable_entry:    vorot
+!============
+modeling_realm:    ocean
+!----------------------------------
+! Variable attributes:
+!----------------------------------
+standard_name:
+units:             m s-1
+cell_methods:      time: mean area: where sea
+cell_measures:     area: areacello
+long_name:         Rotated Sea Water Y Velocity
+comment:           Prognostic y-ward velocity component resolved by the model rotated to north-ward veloctiy.
+!----------------------------------
+! Additional variable information:
+!----------------------------------
+dimensions:        longitude latitude time olevel
+type:              real
+!----------------------------------
+!
